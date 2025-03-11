@@ -1,5 +1,15 @@
 include(CheckCSourceRuns)
 
+set(SSE42_CODE "
+    #include <immintrin.h>
+    int main()
+    {
+        __m128i a = _mm_set_epi64(0, 0);
+        a = _mm_cmpgt_epi64(a, a);
+        return 0;
+    }
+")
+
 set(AVX_CODE "
     #include <immintrin.h>
     int main()
@@ -77,6 +87,13 @@ macro(check_sse type flags)
 endmacro()
 
 # flags are for MSVC only!
+check_sse("SSE42" " ;/arch:SSE4.2")
+if (NOT ${SSE42_FOUND})
+    set(GGML_SSE42 OFF)
+else()
+    set(GGML_SSE42 ON)
+endif()
+
 check_sse("AVX" " ;/arch:AVX")
 if (NOT ${AVX_FOUND})
     set(GGML_AVX OFF)
