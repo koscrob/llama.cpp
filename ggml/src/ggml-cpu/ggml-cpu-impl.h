@@ -59,6 +59,12 @@ struct ggml_compute_params {
 #endif
 #endif
 
+#if defined(_MSC_VER) && defined(GGML_SSE3)
+#ifndef __SSE3__
+#define __SSE3__
+#endif
+#endif
+
 #if defined(__s390x__) && defined(__VEC__)
 #ifndef __VXE__
 #define __VXE__
