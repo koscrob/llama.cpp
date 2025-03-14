@@ -7071,6 +7071,92 @@ void ggml_vec_dot_q4_K_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const voi
 
     *s = hsum_float_8(acc) + _mm_cvtss_f32(acc_m);
 
+#elif defined __SSE3__
+    const uint8_t * scales = (const uint8_t*)&utmp[0];
+    const uint8_t * mins   = (const uint8_t*)&utmp[2];
+
+    int8_t  aux8[QK_K];
+    __m128 sums = _mm_setzero_ps();
+
+    float sumf = 0;
+    for (int i = 0; i < nb; ++i) {
+        const __m128 d = _mm_set1_ps(GGML_FP16_TO_FP32(x[i].d) * y[i].d);
+
+        memcpy(utmp, x[i].scales, 12);
+        utmp[3] = ((utmp[2] >> 4) & kmask2) | (((utmp[1] >> 6) & kmask3) << 4);
+        const uint32_t uaux = utmp[1] & kmask1;
+        utmp[1] = (utmp[2] & kmask2) | (((utmp[0] >> 6) & kmask3) << 4);
+        utmp[2] = uaux;
+        utmp[0] &= kmask1;
+
+        const uint8_t * GGML_RESTRICT q4 = x[i].qs;
+        const  int8_t * GGML_RESTRICT q8 = y[i].qs;
+        int8_t * GGML_RESTRICT a = aux8;
+        for (int j = 0; j < QK_K/64; ++j) {
+            const __m128i low_nibble = _mm_set1_epi8(0xF);
+            const __m128i q4_0 = _mm_loadu_si128(q4);
+            const __m128i q4_1 = _mm_loadu_si128(q4 + 16);
+            const __m128i q4_0_L = _mm_and_si128(q4_0, low_nibble);
+            const __m128i q4_1_L = _mm_and_si128(q4_1, low_nibble);
+            const __m128i q4_0_H = _mm_and_si128(_mm_srli_epi16(q4_0, 4), low_nibble);
+            const __m128i q4_1_H = _mm_and_si128(_mm_srli_epi16(q4_1, 4), low_nibble);
+            _mm_storeu_si128(a +  0, q4_0_L);
+            _mm_storeu_si128(a + 16, q4_1_L);
+            _mm_storeu_si128(a + 32, q4_0_H);
+            _mm_storeu_si128(a + 48, q4_1_H);
+            a  += 64;
+            q4 += 32;
+        }
+        a = aux8;
+        int is = 0;
+        for (int j = 0; j < QK_K/32; ++j) {
+            __m128 scale = _mm_set1_ps(scales[is++]);
+            for (int k = 0; k < 2; ++k) {
+                const __m128i v_q8 = _mm_load_si128(q8);
+                const __m128i v_a  = _mm_load_si128(a);
+                const __m128i v_q8_L = _mm_srai_epi16(_mm_unpacklo_epi8(v_q8, v_q8), 8);
+                const __m128i v_q8_H = _mm_srai_epi16(_mm_unpackhi_epi8(v_q8, v_q8), 8);
+                const __m128i v_a_L  = _mm_srai_epi16(_mm_unpacklo_epi8(v_a, v_a), 8);
+                const __m128i v_a_H  = _mm_srai_epi16(_mm_unpackhi_epi8(v_a, v_a), 8);
+                const __m128i v_qa_L = _mm_madd_epi16(v_q8_L, v_a_L);
+                const __m128i v_qa_H = _mm_madd_epi16(v_q8_H, v_a_H);
+                const __m128  v_qa   = _mm_mul_ps(scale, _mm_cvtepi32_ps(_mm_add_epi32(v_qa_L, v_qa_H)));
+                sums = _mm_add_ps(sums, _mm_mul_ps(d, v_qa));
+                q8 += 16;
+                a  += 16;
+            }
+        }
+
+        const float dmin = GGML_FP16_TO_FP32(x[i].dmin) * y[i].d;
+
+        //const __m128i bsums_0 = _mm_loadu_si128(y[i].bsums);
+        //const __m128i bsums_1 = _mm_loadu_si128(y[i].bsums + 8);
+        //__m128i mins_0  = _mm_loadu_si32(mins);
+        //__m128i mins_1  = _mm_loadu_si32(mins + 4);
+        //mins_0 = _mm_srli_epi16(_mm_unpacklo_epi8(mins_0, mins_0), 8);
+        //mins_1 = _mm_srli_epi16(_mm_unpacklo_epi8(mins_1, mins_1), 8);
+        //mins_0 = _mm_shuffle_epi32(mins_0, _MM_SHUFFLE(1, 1, 0, 0));
+        //mins_1 = _mm_shuffle_epi32(mins_1, _MM_SHUFFLE(1, 1, 0, 0));
+        //mins_0 = _mm_shufflehi_epi16(_mm_shufflelo_epi16(mins_0, _MM_SHUFFLE(1, 1, 0, 0)), _MM_SHUFFLE(1, 1, 0, 0));
+        //mins_1 = _mm_shufflehi_epi16(_mm_shufflelo_epi16(mins_1, _MM_SHUFFLE(1, 1, 0, 0)), _MM_SHUFFLE(1, 1, 0, 0));
+        //__m128 sumi = _mm_cvtepi32_ps(
+        //    _mm_add_epi32(
+        //        _mm_madd_epi16(bsums_0, mins_0),
+        //        _mm_madd_epi16(bsums_1, mins_1)
+        //    )
+        //);
+        //sumi  = _mm_hadd_ps(sumi, sumi);
+        //sumi  = _mm_hadd_ps(sumi, sumi);
+        //sumf -= dmin * _mm_cvtss_f32(sumi);
+
+        int sumi = 0;
+        for (int j = 0; j < QK_K/16; ++j) sumi += y[i].bsums[j] * mins[j/2];
+        sumf -= dmin * sumi;
+    }
+    sums  = _mm_hadd_ps(sums, sums);
+    sums  = _mm_hadd_ps(sums, sums);
+    sumf += _mm_cvtss_f32(sums);
+    *s = sumf;
 #elif defined __riscv_v_intrinsic
 
     const uint8_t * scales = (const uint8_t*)&utmp[0];
