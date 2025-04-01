@@ -2823,9 +2823,9 @@ void ggml_vec_dot_q4_1_q8_1(int n, float * GGML_RESTRICT s, size_t bs, const voi
     for (; ib < nb; ++ib) {
         const __m128 d = _mm_set_ps1(GGML_FP16_TO_FP32(x[ib].d) * GGML_FP16_TO_FP32(y[ib].d));
 
-        const __m128i x0 = _mm_loadu_si128((const int8_t *) x[ib].qs);
-        const __m128i y0 = _mm_loadu_si128((const int8_t *) y[ib].qs);
-        const __m128i y1 = _mm_loadu_si128((const int8_t *) y[ib].qs + 16);
+        const __m128i x0 = _mm_loadu_si128((const __m128i *) x[ib].qs);
+        const __m128i y0 = _mm_loadu_si128((const __m128i *) y[ib].qs);
+        const __m128i y1 = _mm_loadu_si128((const __m128i *) y[ib].qs + 1);
 
         const __m128i x0_L = _mm_srli_epi16(_mm_slli_epi16(_mm_unpacklo_epi8(x0, x0), 12), 12);
         const __m128i x0_H = _mm_srli_epi16(_mm_slli_epi16(_mm_unpackhi_epi8(x0, x0), 12), 12);
@@ -4095,10 +4095,10 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
     for (; ib < nb; ++ib) {
         const __m128 d = _mm_set_ps1(GGML_FP16_TO_FP32(x[ib].d) * GGML_FP16_TO_FP32(y[ib].d));
 
-        const __m128i qx_0   = _mm_loadu_si128((const int8_t *) x[ib].qs);
-        const __m128i qy_0   = _mm_loadu_si128((const int8_t *) y[ib].qs);
-        const __m128i qx_1   = _mm_loadu_si128((const int8_t *) x[ib].qs + 16);
-        const __m128i qy_1   = _mm_loadu_si128((const int8_t *) y[ib].qs + 16);
+        const __m128i qx_0   = _mm_loadu_si128((const __m128i *)x[ib].qs);
+        const __m128i qy_0   = _mm_loadu_si128((const __m128i *)y[ib].qs);
+        const __m128i qx_1   = _mm_loadu_si128((const __m128i *)x[ib].qs + 1);
+        const __m128i qy_1   = _mm_loadu_si128((const __m128i *)y[ib].qs + 1);
         const __m128i qx_0_l = _mm_srai_epi16(_mm_unpacklo_epi8(qx_0, qx_0), 8);
         const __m128i qx_0_h = _mm_srai_epi16(_mm_unpackhi_epi8(qx_0, qx_0), 8);
         const __m128i qy_0_l = _mm_srai_epi16(_mm_unpacklo_epi8(qy_0, qy_0), 8);
