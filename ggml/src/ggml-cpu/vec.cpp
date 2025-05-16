@@ -110,6 +110,22 @@ void ggml_vec_dot_bf16(int n, float * GGML_RESTRICT s, size_t bs, ggml_bf16_t * 
     sumf += (ggml_float)_mm_cvtss_f32(g);
 
 #undef LOAD
+#elif defined(__SSE3__)
+    __m128i zero = _mm_setzero_si128();
+    __m128 c1    = _mm_setzero_ps();
+    for (; i + 8 <= n; i += 8) {
+        __m128i x_12 = _mm_loadu_si128((const __m128i *)(x + i));
+        __m128i y_12 = _mm_loadu_si128((const __m128i *)(y + i));
+        __m128  x_1  = _mm_castsi128_ps(_mm_unpacklo_epi16(zero, x_12));
+        __m128  x_2  = _mm_castsi128_ps(_mm_unpackhi_epi16(zero, x_12));
+        __m128  y_1  = _mm_castsi128_ps(_mm_unpacklo_epi16(zero, y_12));
+        __m128  y_2  = _mm_castsi128_ps(_mm_unpackhi_epi16(zero, y_12));
+        c1           = _mm_add_ps(_mm_mul_ps(x_1, y_1), c1);
+        c1           = _mm_add_ps(_mm_mul_ps(x_2, y_2), c1);
+    }
+    c1 = _mm_hadd_ps(c1, c1);
+    c1 = _mm_hadd_ps(c1, c1);
+    sumf += (ggml_float)_mm_cvtss_f32(c1);
 #endif
 
     for (; i < n; ++i) {
