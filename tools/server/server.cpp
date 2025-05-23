@@ -1891,6 +1891,7 @@ struct server_context {
     float slot_prompt_similarity = 0.0f;
 
     common_chat_templates_ptr chat_templates;
+    oaicompat_parser_options  oai_parser_opt;
 
     ~server_context() {
         mtmd_free(mctx);
@@ -2086,6 +2087,15 @@ struct server_context {
         }
 
         metrics.init();
+
+        oai_parser_opt = {
+            /* use_jinja             */ params_base.use_jinja,
+            /* prefill_assistant     */ params_base.prefill_assistant,
+            /* reasoning_format      */ params_base.reasoning_format,
+            /* common_chat_templates */ chat_templates.get(),
+            /* allow_image           */ mctx ? mtmd_support_vision(mctx) : false,
+            /* allow_audio           */ mctx ? mtmd_support_audio (mctx) : false,
+        };
     }
 
     server_slot * get_slot_by_id(int id) {
@@ -3341,6 +3351,37 @@ struct server_context {
             common_set_adapter_lora(ctx, slot_batched->lora);
         }
 
+        const bool do_encode = (params_base.embedding || params_base.reranking);
+
+        // pad the batch so that batch.n_tokens >= n_slots
+        // TODO: temporary workaround for https://github.com/ggml-org/llama.cpp/issues/13689
+        if (do_encode) {
+            const int n_slots = slots.size();
+
+            if (batch.n_tokens < n_slots) {
+                std::set<llama_seq_id> seq_ids;
+                for (int j = 0; j < batch.n_tokens; ++j) {
+                    seq_ids.insert(batch.seq_id[j][0]);
+                }
+
+                // find unused sequence id
+                llama_seq_id seq_id = -1;
+                for (int i = 0; i < n_slots; ++i) {
+                    if (seq_ids.find(i) == seq_ids.end()) {
+                        seq_id = i;
+                    }
+                }
+
+                const int n_add = n_slots - batch.n_tokens;
+
+                SRV_WRN("adding %d dummy tokens to the batch, seq_id = %d\n", n_add, seq_id);
+
+                for (int j = 0; j < n_add; ++j) {
+                    common_batch_add(batch, 0, j, { seq_id }, false);
+                }
+            }
+        }
+
         // process the created batch of tokens
         for (int32_t i = 0; i < batch.n_tokens; i += n_batch) {
             const int32_t n_tokens = std::min(n_batch, batch.n_tokens - i);
@@ -3357,7 +3398,7 @@ struct server_context {
 
             int ret = 0;
 
-            if (params_base.embedding || params_base.reranking) {
+            if (do_encode) {
                 ret = llama_encode(ctx, batch_view);
             } else {
                 ret = llama_decode(ctx, batch_view);
@@ -4061,7 +4102,10 @@ int main(int argc, char ** argv) {
             { "default_generation_settings", ctx_server.default_generation_settings_for_props },
             { "total_slots",                 ctx_server.params_base.n_parallel },
             { "model_path",                  ctx_server.params_base.model.path },
-            { "modalities",                  json{{"vision", ctx_server.mctx != nullptr}} }, // TODO: add more in the future
+            { "modalities",                  json{
+                {"vision", ctx_server.oai_parser_opt.allow_image},
+                {"audio",  ctx_server.oai_parser_opt.allow_audio},
+            } },
             { "chat_template",               common_chat_templates_source(ctx_server.chat_templates.get()) },
             { "bos_token",                   common_token_to_piece(ctx_server.ctx, llama_vocab_bos(ctx_server.vocab), /* special= */ true)},
             { "eos_token",                   common_token_to_piece(ctx_server.ctx, llama_vocab_eos(ctx_server.vocab), /* special= */ true)},
@@ -4152,10 +4196,10 @@ int main(int argc, char ** argv) {
                 for (auto & file : files) {
                     mtmd::bitmap bmp(mtmd_helper_bitmap_init_from_buf(file.data(), file.size()));
                     if (!bmp.ptr) {
-                        throw std::runtime_error("Failed to load image");
+                        throw std::runtime_error("Failed to load image or audio file");
                     }
                     // calculate bitmap hash (for KV caching)
-                    std::string hash = fnv_hash(bmp.data(), bmp.nx()*bmp.ny()*3);
+                    std::string hash = fnv_hash(bmp.data(), bmp.n_bytes());
                     bmp.set_id(hash.c_str());
                     bitmaps.entries.push_back(std::move(bmp));
                 }
@@ -4387,7 +4431,7 @@ int main(int argc, char ** argv) {
             OAICOMPAT_TYPE_NONE); // infill is not OAI compatible
     };
 
-    const auto handle_chat_completions = [&ctx_server, &params, &res_error, &handle_completions_impl](const httplib::Request & req, httplib::Response & res) {
+    const auto handle_chat_completions = [&ctx_server, &res_error, &handle_completions_impl](const httplib::Request & req, httplib::Response & res) {
         LOG_DBG("request: %s\n", req.body.c_str());
         if (ctx_server.params_base.embedding) {
             res_error(res, format_error_response("This server does not support completions. Start it without `--embeddings`", ERROR_TYPE_NOT_SUPPORTED));
@@ -4396,13 +4440,9 @@ int main(int argc, char ** argv) {
 
         auto body = json::parse(req.body);
         std::vector<raw_buffer> files;
-        json data = oaicompat_completion_params_parse(
+        json data = oaicompat_chat_params_parse(
             body,
-            params.use_jinja,
-            params.prefill_assistant,
-            params.reasoning_format,
-            ctx_server.chat_templates.get(),
-            ctx_server.mctx,
+            ctx_server.oai_parser_opt,
             files);
 
         handle_completions_impl(
@@ -4415,16 +4455,12 @@ int main(int argc, char ** argv) {
     };
 
     // same with handle_chat_completions, but without inference part
-    const auto handle_apply_template = [&ctx_server, &params, &res_ok](const httplib::Request & req, httplib::Response & res) {
+    const auto handle_apply_template = [&ctx_server, &res_ok](const httplib::Request & req, httplib::Response & res) {
         auto body = json::parse(req.body);
         std::vector<raw_buffer> files; // dummy, unused
-        json data = oaicompat_completion_params_parse(
+        json data = oaicompat_chat_params_parse(
             body,
-            params.use_jinja,
-            params.prefill_assistant,
-            params.reasoning_format,
-            ctx_server.chat_templates.get(),
-            ctx_server.mctx,
+            ctx_server.oai_parser_opt,
             files);
         res_ok(res, {{ "prompt", std::move(data.at("prompt")) }});
     };
