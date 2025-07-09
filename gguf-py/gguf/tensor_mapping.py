@@ -286,12 +286,14 @@ class TensorNameMap:
         # Post feed-forward norm
         MODEL_TENSOR.FFN_PRE_NORM: (
             "model.layers.{bid}.pre_feedforward_layernorm", # gemma2
+            "model.layers.{bid}.pre_ff_layernorm.weight",
         ),
 
         # Post feed-forward norm
         MODEL_TENSOR.FFN_POST_NORM: (
             "model.layers.{bid}.post_feedforward_layernorm", # gemma2 olmo2
             "model.layers.{bid}.post_mlp_layernorm", # glm-4-0414
+            "model.layers.{bid}.feed_forward.up_proj",
         ),
 
         MODEL_TENSOR.FFN_GATE_INP: (
@@ -303,6 +305,7 @@ class TensorNameMap:
             "model.layers.{bid}.block_sparse_moe.router.layer", # granitemoe
             "model.layers.{bid}.feed_forward.router",           # llama4
             "encoder.layers.{bid}.mlp.router.layer",            # nomic-bert-moe
+            "model.layers.{bid}.mlp.gate.wg",                   # hunyuan
         ),
 
         MODEL_TENSOR.FFN_GATE_INP_SHEXP: (
@@ -362,6 +365,8 @@ class TensorNameMap:
             "model.layers.{bid}.mlp.shared_expert.up_proj",          # qwen2moe
             "model.layers.{bid}.mlp.shared_experts.up_proj",         # deepseek deepseek2
             "model.layers.{bid}.feed_forward.shared_expert.up_proj", # llama4
+            "model.layers.{bid}.feed_forward.down_proj",
+            "model.layers.{bid}.mlp.shared_mlp.up_proj",             # hunyuan
         ),
 
         # AWQ-activation gate
@@ -398,6 +403,7 @@ class TensorNameMap:
             "model.layers.{bid}.mlp.shared_expert.gate_proj",          # qwen2moe
             "model.layers.{bid}.mlp.shared_experts.gate_proj",         # deepseek deepseek2
             "model.layers.{bid}.feed_forward.shared_expert.gate_proj", # llama4
+            "model.layers.{bid}.mlp.shared_mlp.gate_proj",             # hunyuan
         ),
 
         # Feed-forward down
@@ -447,11 +453,13 @@ class TensorNameMap:
             "model.layers.{bid}.mlp.shared_experts.down_proj",         # deepseek deepseek2
             "model.layers.{bid}.feed_forward.shared_expert.down_proj", # llama4
             "model.layers.{bid}.shared_mlp.output_linear",             # granitemoe
+            "model.layers.{bid}.mlp.shared_mlp.down_proj",             # hunyuan
         ),
 
         MODEL_TENSOR.ATTN_Q_NORM: (
             "language_model.encoder.layers.{bid}.self_attention.q_layernorm",
             "model.layers.{bid}.self_attn.q_layernorm",                       # persimmon
+            "model.layers.{bid}.self_attn.query_layernorm",                   # hunyuan
             "model.layers.{bid}.self_attn.q_norm",                            # cohere olmoe chameleon olmo2
             "transformer.blocks.{bid}.attn.q_ln",                             # sea-lion
             "encoder.layer.{bid}.attention.self.layer_norm_q",                # jina-bert-v2
@@ -461,6 +469,7 @@ class TensorNameMap:
         MODEL_TENSOR.ATTN_K_NORM: (
             "language_model.encoder.layers.{bid}.self_attention.k_layernorm",
             "model.layers.{bid}.self_attn.k_layernorm",                       # persimmon
+            "model.layers.{bid}.self_attn.key_layernorm",                     # hunyuan
             "model.layers.{bid}.self_attn.k_norm",                            # cohere olmoe chameleon olmo2
             "transformer.blocks.{bid}.attn.k_ln",                             # sea-lion
             "encoder.layer.{bid}.attention.self.layer_norm_k",                # jina-bert-v2
@@ -477,17 +486,83 @@ class TensorNameMap:
             "encoder.layers.{bid}.norm2",                   # nomic-bert
             "transformer.decoder_layer.{bid}.rms_norm_3",   # Grok
             "encoder.layer.{bid}.mlp.layernorm",            # jina-bert-v2
-            "encoder.layer.{bid}.layer_norm_2"              # jina-v2-code
+            "encoder.layer.{bid}.layer_norm_2",             # jina-v2-code
+        ),
+
+        MODEL_TENSOR.PER_LAYER_TOKEN_EMBD: (
+            "model.embed_tokens_per_layer",  # gemma3n
+        ),
+
+        MODEL_TENSOR.PER_LAYER_MODEL_PROJ: (
+            "model.per_layer_model_projection",  # gemma3n
+        ),
+
+        MODEL_TENSOR.PER_LAYER_PROJ_NORM: (
+            "model.per_layer_projection_norm",  # gemma3n
+        ),
+
+        MODEL_TENSOR.ALTUP_PROJ: (
+            "model.altup_projections",  # gemma3n
+        ),
+
+        MODEL_TENSOR.ALTUP_UNEMBD_PROJ: (
+            "model.altup_unembed_projections",  # gemma3n
+        ),
+
+        MODEL_TENSOR.PER_LAYER_INP_GATE: (
+            "model.layers.{bid}.per_layer_input_gate",  # gemma3n
+        ),
+
+        MODEL_TENSOR.PER_LAYER_PROJ: (
+            "model.layers.{bid}.per_layer_projection",  # gemma3n
+        ),
+
+        MODEL_TENSOR.PER_LAYER_POST_NORM: (
+            "model.layers.{bid}.post_per_layer_input_norm",  # gemma3n
+        ),
+
+        MODEL_TENSOR.ALTUP_CORRECT_COEF: (
+            "model.layers.{bid}.altup.correction_coefs",  # gemma3n
+        ),
+
+        MODEL_TENSOR.ALTUP_CORRECT_SCALE: (
+            "model.layers.{bid}.altup.correct_output_scale",  # gemma3n
+        ),
+
+        MODEL_TENSOR.ALTUP_PREDICT_COEF: (
+            "model.layers.{bid}.altup.prediction_coefs",  # gemma3n
+        ),
+
+        MODEL_TENSOR.ALTUP_ROUTER: (
+            "model.layers.{bid}.altup.modality_router",  # gemma3n
+        ),
+
+        MODEL_TENSOR.ALTUP_ROUTER_NORM: (
+            "model.layers.{bid}.altup.router_norm",  # gemma3n
+        ),
+
+        MODEL_TENSOR.LAUREL_L: (
+            "model.layers.{bid}.laurel.linear_left",  # gemma3n
+        ),
+
+        MODEL_TENSOR.LAUREL_R: (
+            "model.layers.{bid}.laurel.linear_right",  # gemma3n
+        ),
+
+        MODEL_TENSOR.LAUREL_POST_NORM: (
+            "model.layers.{bid}.laurel.post_laurel_norm",  # gemma3n
         ),
 
         MODEL_TENSOR.SSM_IN: (
             "model.layers.{bid}.in_proj",
             "backbone.layers.{bid}.mixer.in_proj",
+            "model.layers.{bid}.mamba.in_proj",
         ),
 
         MODEL_TENSOR.SSM_CONV1D: (
             "model.layers.{bid}.conv1d",
             "backbone.layers.{bid}.mixer.conv1d",
+            "model.layers.{bid}.mamba.conv1d",
         ),
 
         MODEL_TENSOR.SSM_X: (
@@ -498,21 +573,30 @@ class TensorNameMap:
         MODEL_TENSOR.SSM_DT: (
             "model.layers.{bid}.dt_proj",
             "backbone.layers.{bid}.mixer.dt_proj",
+            "model.layers.{bid}.mamba.dt_proj",
         ),
 
         MODEL_TENSOR.SSM_A: (
             "model.layers.{bid}.A_log",
             "backbone.layers.{bid}.mixer.A_log",
+            "model.layers.{bid}.mamba.A_log",
         ),
 
         MODEL_TENSOR.SSM_D: (
             "model.layers.{bid}.D",
             "backbone.layers.{bid}.mixer.D",
+            "model.layers.{bid}.mamba.D",
+        ),
+
+        MODEL_TENSOR.SSM_NORM: (
+            "model.layers.{bid}.mamba.norm", # falcon-h1
+            "backbone.layers.{bid}.mixer.norm",  # mamba2
         ),
 
         MODEL_TENSOR.SSM_OUT: (
             "model.layers.{bid}.out_proj",
             "backbone.layers.{bid}.mixer.out_proj",
+            "model.layers.{bid}.mamba.out_proj",          # falcon-h1
         ),
 
         MODEL_TENSOR.TIME_MIX_W0: (
