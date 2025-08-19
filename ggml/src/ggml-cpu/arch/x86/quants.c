@@ -784,6 +784,7 @@ void ggml_vec_dot_q4_1_q8_1(int n, float * GGML_RESTRICT s, size_t bs, const voi
     *s = hsum_float_8(acc) + summs;
 #elif defined(__SSE3__)
     __m128 sums = _mm_setzero_ps();
+    float sumf = 0;
     
     for (; ib < nb; ++ib) {
         const __m128 d = _mm_set_ps1(GGML_FP16_TO_FP32(x[ib].d) * GGML_FP16_TO_FP32(y[ib].d));
@@ -982,7 +983,6 @@ void ggml_vec_dot_q5_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
         acc = _mm256_add_ps(_mm256_mul_ps(d, q), acc);
     }
 
-    sumf = hsum_float_8(acc);
     *s = hsum_float_8(acc);
 #elif defined(__SSE3__)
     __m128  sums = _mm_setzero_ps();
@@ -1033,9 +1033,7 @@ void ggml_vec_dot_q5_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
 
     sums  = _mm_hadd_ps(sums, sums);
     sums  = _mm_hadd_ps(sums, sums);
-    sumf += _mm_cvtss_f32(sums);
-
-    *s = sumf;
+    *s = _mm_cvtss_f32(sums);
 #else
     UNUSED(nb);
     UNUSED(ib);
