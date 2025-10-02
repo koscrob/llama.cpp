@@ -42,7 +42,7 @@ struct llama_hparams {
     uint32_t n_embd;
     uint32_t n_embd_features = 0;
     uint32_t n_layer;
-     int32_t n_layer_kv_from_start = -1; // if non-negative, the first n_layer_kv_from_start layers have KV cache
+    int32_t n_layer_kv_from_start = -1; // if non-negative, the first n_layer_kv_from_start layers have KV cache
     uint32_t n_rot;
     uint32_t n_embd_head_k; // dimension of keys (d_k). d_q is assumed to be the same, but there are n_head q heads, and only n_head_kv k-v heads
     uint32_t n_embd_head_v; // dimension of values (d_v) aka n_embd_head
@@ -69,10 +69,13 @@ struct llama_hparams {
     uint32_t n_lora_kv          = 0;
     uint32_t n_ff_exp           = 0;
     uint32_t n_ff_shexp         = 0;
+    uint32_t n_ff_chexp         = 0;
     uint32_t n_expert_shared    = 0;
     uint32_t n_norm_groups      = 0;
+    uint32_t n_group_experts    = 0;
 
-    float    expert_weights_scale = 0.0;
+    float    expert_group_scale   = 0.05f;
+    float    expert_weights_scale = 0.0f;
     bool     expert_weights_norm  = false;
     uint32_t expert_gating_func   = LLAMA_EXPERT_GATING_FUNC_TYPE_NONE;
     uint32_t moe_every_n_layers   = 0;
