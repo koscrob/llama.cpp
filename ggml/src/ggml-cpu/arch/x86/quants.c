@@ -22,6 +22,99 @@
 
 #define UNUSED GGML_UNUSED
 
+#if defined(__SSE3__) || defined(__SSSE3__)
+
+static inline __m128i cmpge_epi8_sse(const __m128i a, const __m128i b) {
+    return _mm_or_si128(
+        _mm_cmpeq_epi8(a, b),
+        _mm_cmpgt_epi8(a, b)
+    );
+}
+
+#if defined(__SSSE3__)
+
+static inline __m128i sign_epi8_sse(const __m128i dst, const __m128i src) { return _mm_sign_epi8(dst, src); }
+static inline __m128i maddubs_epi16_sse(const __m128i dst, const __m128i src) { return _mm_maddubs_epi16(dst, src); }
+static inline __m128i shuffle_epi8_sse(const __m128i a, __m128i mask) { return _mm_shuffle_epi8(a, mask); }
+
+#else
+
+static inline __m128i sign_epi8_sse(const __m128i dst, const __m128i src) {
+    __m128i tmp2 = _mm_setzero_si128();
+    __m128i tmp3 = _mm_and_si128(_mm_cmpgt_epi8(src, tmp2), dst);
+    tmp2 = _mm_cmpgt_epi8(tmp2, src);
+    return _mm_or_si128(_mm_sub_epi8(_mm_andnot_si128(dst, tmp2), tmp2), tmp3);
+}
+
+static inline __m128i maddubs_epi16_sse(const __m128i dst, const __m128i src) {
+    return _mm_adds_epi16(
+        _mm_mullo_epi16(
+            _mm_srli_epi16(dst, 8),
+            _mm_srai_epi16(src, 8)
+        ),
+        _mm_mullo_epi16(
+            _mm_srai_epi16(_mm_slli_si128(src, 1), 8),
+            _mm_and_si128(dst, _mm_set1_epi16(0x00FF))
+        )
+    );
+}
+
+static inline __m128i shuffle_epi8_sse(const __m128i a, __m128i mask) {
+    union {
+        __m128i i;
+        int8_t s8 [16];
+    } A, B, MASK;
+    A.i = a;  
+    MASK.i = _mm_and_si128(mask, _mm_set1_epi8(0x0F));
+    __m128i maskZero = cmpge_epi8_sse(mask, _mm_setzero_si128());  
+
+    B.s8[ 0] = A.s8[MASK.s8[ 0]];
+    B.s8[ 1] = A.s8[MASK.s8[ 1]];
+    B.s8[ 2] = A.s8[MASK.s8[ 2]];
+    B.s8[ 3] = A.s8[MASK.s8[ 3]];
+    B.s8[ 4] = A.s8[MASK.s8[ 4]];
+    B.s8[ 5] = A.s8[MASK.s8[ 5]];
+    B.s8[ 6] = A.s8[MASK.s8[ 6]];
+    B.s8[ 7] = A.s8[MASK.s8[ 7]];
+    B.s8[ 8] = A.s8[MASK.s8[ 8]];
+    B.s8[ 9] = A.s8[MASK.s8[ 9]];
+    B.s8[10] = A.s8[MASK.s8[10]];
+    B.s8[11] = A.s8[MASK.s8[11]];
+    B.s8[12] = A.s8[MASK.s8[12]];
+    B.s8[13] = A.s8[MASK.s8[13]];
+    B.s8[14] = A.s8[MASK.s8[14]];
+    B.s8[15] = A.s8[MASK.s8[15]];
+
+    return _mm_and_si128(B.i, maskZero);
+}
+
+#endif // defined(__SSSE3__)
+
+// horizontally add 4 floats
+static inline float hsum_float_4(const __m128 x) {
+    const __m128 res = _mm_hadd_ps(x, x);
+    return _mm_cvtss_f32(_mm_hadd_ps(res, res));
+}
+
+static inline __m128i mul_add_epi8_sse(const __m128i x, const __m128i y) {
+    const __m128i ax = sign_epi8_sse(x, x);
+    const __m128i sy = sign_epi8_sse(y, x);
+    return maddubs_epi16_sse(ax, sy);
+}
+
+static inline __m128 mul_sum_i8_quad_float(const __m128i x_1_0, const __m128i x_1_1,
+                                           const __m128i y_1_0, const __m128i y_1_1) {
+    const __m128i mone = _mm_set1_epi16(1);
+    const __m128i p16_1_0 = mul_add_epi8_sse(x_1_0, y_1_0);
+    const __m128i p16_1_1 = mul_add_epi8_sse(x_1_1, y_1_1);
+    const __m128i p_1_0 = _mm_madd_epi16(p16_1_0, mone);
+    const __m128i p_1_1 = _mm_madd_epi16(p16_1_1, mone);
+    const __m128i p_1 = _mm_add_epi32(p_1_0, p_1_1);
+    return _mm_cvtepi32_ps(p_1);
+}
+
+#endif // defined(__SSE3__) || defined(__SSSE3__)
+
 // some compilers don't provide _mm256_set_m128i, e.g. gcc 7
 #define MM256_SET_M128I(a, b) _mm256_insertf128_si256(_mm256_castsi128_si256(b), (a), 1)
 
@@ -168,12 +261,6 @@ static inline __m128i packNibbles( __m128i bytes1, __m128i bytes2 )
     bytes2 = _mm_or_si128( low, high );
 
     return _mm_packus_epi16( bytes1, bytes2);
-}
-
-static inline __m128i mul_add_epi8_sse(const __m128i x, const __m128i y) {
-    const __m128i ax = _mm_sign_epi8(x, x);
-    const __m128i sy = _mm_sign_epi8(y, x);
-    return _mm_maddubs_epi16(ax, sy);
 }
 
 // spread 32 bits to 32 bytes { 0x00, 0xFF }
@@ -678,7 +765,7 @@ void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
 
     sumf = hsum_float_4x4(acc_0, acc_1, acc_2, acc_3);
 #elif defined(__SSE3__)
-    const __m128i eight = _mm_set1_epi16(8);
+    const __m128i offset = _mm_set1_epi16(8);
     __m128 sums = _mm_setzero_ps();
 
     for (; ib < nb; ++ib) {
@@ -688,10 +775,10 @@ void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
         const __m128i y0 = _mm_loadu_si128((const __m128i *) y[ib].qs);
         const __m128i y1 = _mm_loadu_si128((const __m128i *) y[ib].qs + 1);
 
-        const __m128i x0_L = _mm_sub_epi16(_mm_srli_epi16(_mm_slli_epi16(_mm_unpacklo_epi8(x0, x0), 12), 12), eight);
-        const __m128i x0_H = _mm_sub_epi16(_mm_srli_epi16(_mm_slli_epi16(_mm_unpackhi_epi8(x0, x0), 12), 12), eight);
-        const __m128i x1_L = _mm_sub_epi16(_mm_srli_epi16(_mm_unpacklo_epi8(x0, x0), 12), eight);
-        const __m128i x1_H = _mm_sub_epi16(_mm_srli_epi16(_mm_unpackhi_epi8(x0, x0), 12), eight);
+        const __m128i x0_L = _mm_sub_epi16(_mm_srli_epi16(_mm_slli_epi16(_mm_unpacklo_epi8(x0, x0), 12), 12), offset);
+        const __m128i x0_H = _mm_sub_epi16(_mm_srli_epi16(_mm_slli_epi16(_mm_unpackhi_epi8(x0, x0), 12), 12), offset);
+        const __m128i x1_L = _mm_sub_epi16(_mm_srli_epi16(_mm_unpacklo_epi8(x0, x0), 12), offset);
+        const __m128i x1_H = _mm_sub_epi16(_mm_srli_epi16(_mm_unpackhi_epi8(x0, x0), 12), offset);
 
         const __m128i y0_L = _mm_srai_epi16(_mm_unpacklo_epi8(y0, y0), 8);
         const __m128i y0_H = _mm_srai_epi16(_mm_unpackhi_epi8(y0, y0), 8);
@@ -3969,11 +4056,15 @@ void ggml_vec_dot_iq4_nl_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const v
 
     sumf = hsum_float_8(_mm256_add_ps(accum1, accum2));
 
-#elif defined __AVX__
+#elif defined(__AVX__) || defined(__SSE3__)
     const __m128i values128 = _mm_loadu_si128((const __m128i*)kvalues_iq4nl);
     const __m128i m4b  = _mm_set1_epi8(0x0f);
 
+#if defined(__AVX__)
     __m256 accum = _mm256_setzero_ps();
+#else
+    __m128 accum = _mm_setzero_ps();
+#endif
     for (; ib + 1 < nb; ib += 2) {
         const __m128i q4bits_1 = _mm_loadu_si128((const __m128i *)x[ib + 0].qs);
         const __m128i q4bits_2 = _mm_loadu_si128((const __m128i *)x[ib + 1].qs);
@@ -3982,17 +4073,29 @@ void ggml_vec_dot_iq4_nl_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const v
         const __m128i q8b_2_0 = _mm_loadu_si128((const __m128i *)y[ib + 1].qs);
         const __m128i q8b_2_1 = _mm_loadu_si128((const __m128i *)y[ib + 1].qs + 1);
 
-        const __m128i q4b_1_0 = _mm_shuffle_epi8(values128, _mm_and_si128(q4bits_1, m4b));
-        const __m128i q4b_1_1 = _mm_shuffle_epi8(values128, _mm_and_si128(_mm_srli_epi16(q4bits_1, 4), m4b));
-        const __m128i q4b_2_0 = _mm_shuffle_epi8(values128, _mm_and_si128(q4bits_2, m4b));
-        const __m128i q4b_2_1 = _mm_shuffle_epi8(values128, _mm_and_si128(_mm_srli_epi16(q4bits_2, 4), m4b));
+        const __m128i q4b_1_0 = shuffle_epi8_sse(values128, _mm_and_si128(q4bits_1, m4b));
+        const __m128i q4b_1_1 = shuffle_epi8_sse(values128, _mm_and_si128(_mm_srli_epi16(q4bits_1, 4), m4b));
+        const __m128i q4b_2_0 = shuffle_epi8_sse(values128, _mm_and_si128(q4bits_2, m4b));
+        const __m128i q4b_2_1 = shuffle_epi8_sse(values128, _mm_and_si128(_mm_srli_epi16(q4bits_2, 4), m4b));
 
+#if defined(__AVX__)
         const __m256 p = mul_sum_i8_quad_float(q4b_1_0, q4b_1_1, q4b_2_0, q4b_2_1, q8b_1_0, q8b_1_1, q8b_2_0, q8b_2_1);
         const __m256 deltas = quad_fp16_delta_float(x[ib].d, y[ib].d, x[ib + 1].d, y[ib + 1].d);
         accum = _mm256_add_ps(_mm256_mul_ps(deltas, p), accum);
+#else
+        const __m128 p_0 = mul_sum_i8_quad_float(q4b_1_0, q4b_1_1, q8b_1_0, q8b_1_1);
+        const __m128 p_1 = mul_sum_i8_quad_float(q4b_2_0, q4b_2_1, q8b_2_0, q8b_2_1);
+        const __m128 deltas_0 = _mm_set1_ps(GGML_CPU_FP16_TO_FP32(x[ib].d) * GGML_CPU_FP16_TO_FP32(y[ib].d));
+        const __m128 deltas_1 = _mm_set1_ps(GGML_CPU_FP16_TO_FP32(x[ib + 1].d) * GGML_CPU_FP16_TO_FP32(y[ib + 1].d));
+        accum = _mm_add_ps(_mm_mul_ps(deltas_0, p_0), accum);
+        accum = _mm_add_ps(_mm_mul_ps(deltas_1, p_1), accum);
+#endif
     }
-
+#if defined(__AVX__)
     sumf = hsum_float_8(accum);
+#else
+    sumf = hsum_float_4(accum);
+#endif
 
 #endif
     for (; ib < nb; ++ib) {
@@ -4057,11 +4160,14 @@ void ggml_vec_dot_iq4_xs_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const v
 
     *s = hsum_float_8(accum);
 
-#elif defined __AVX__
+#elif defined(__SSE3__)
     const __m128i values128 = _mm_loadu_si128((const __m128i*)kvalues_iq4nl);
     const __m128i m4b  = _mm_set1_epi8(0x0f);
-
+#if defined(__AVX__)
     __m256 accum = _mm256_setzero_ps();
+#else
+    __m128 accum = _mm_setzero_ps();
+#endif
     for (int ibl = 0; ibl < nb; ++ibl) {
         const uint8_t * qs = x[ibl].qs;
         const int8_t  * q8 = y[ibl].qs;
@@ -4077,10 +4183,10 @@ void ggml_vec_dot_iq4_xs_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const v
             const __m128i q8b_1_1 = _mm_loadu_si128((const __m128i *)q8); q8 += 16;
             const __m128i q8b_2_0 = _mm_loadu_si128((const __m128i *)q8); q8 += 16;
             const __m128i q8b_2_1 = _mm_loadu_si128((const __m128i *)q8); q8 += 16;
-            const __m128i q4b_1_0 = _mm_shuffle_epi8(values128, _mm_and_si128(q4bits_1, m4b));
-            const __m128i q4b_1_1 = _mm_shuffle_epi8(values128, _mm_and_si128(_mm_srli_epi16(q4bits_1, 4), m4b));
-            const __m128i q4b_2_0 = _mm_shuffle_epi8(values128, _mm_and_si128(q4bits_2, m4b));
-            const __m128i q4b_2_1 = _mm_shuffle_epi8(values128, _mm_and_si128(_mm_srli_epi16(q4bits_2, 4), m4b));
+            const __m128i q4b_1_0 = shuffle_epi8_sse(values128, _mm_and_si128(q4bits_1, m4b));
+            const __m128i q4b_1_1 = shuffle_epi8_sse(values128, _mm_and_si128(_mm_srli_epi16(q4bits_1, 4), m4b));
+            const __m128i q4b_2_0 = shuffle_epi8_sse(values128, _mm_and_si128(q4bits_2, m4b));
+            const __m128i q4b_2_1 = shuffle_epi8_sse(values128, _mm_and_si128(_mm_srli_epi16(q4bits_2, 4), m4b));
             const __m128i p16_1_0 = mul_add_epi8_sse(q4b_1_0, q8b_1_0);
             const __m128i p16_1_1 = mul_add_epi8_sse(q4b_1_1, q8b_1_1);
             const __m128i p16_2_0 = mul_add_epi8_sse(q4b_2_0, q8b_2_0);
@@ -4099,11 +4205,20 @@ void ggml_vec_dot_iq4_xs_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const v
         }
         __m128i sumi12_0 = _mm_add_epi32(sumi1_0, sumi2_0);
         __m128i sumi12_1 = _mm_add_epi32(sumi1_1, sumi2_1);
+#if defined(__AVX__)
         accum = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(GGML_CPU_FP16_TO_FP32(x[ibl].d)*y[ibl].d),
                 _mm256_cvtepi32_ps(MM256_SET_M128I(sumi12_1, sumi12_0))), accum);
+#else
+        const __m128 scale = _mm_set1_ps(GGML_CPU_FP16_TO_FP32(x[ibl].d)*y[ibl].d);
+        accum = _mm_add_ps(accum, _mm_mul_ps(scale, _mm_cvtepi32_ps(sumi12_0)));
+        accum = _mm_add_ps(accum, _mm_mul_ps(scale, _mm_cvtepi32_ps(sumi12_1)));
+#endif
     }
-
+#if defined(__AVX__)
     *s = hsum_float_8(accum);
+#else
+    *s = hsum_float_4(accum);
+#endif
 
 #else
     UNUSED(x);
