@@ -51,6 +51,12 @@ The packages for FP32 and FP16 would have different accuracy and performance on 
 
 ## News
 
+- 2026.04
+
+  - Optimize mul_mat by reorder feature for data type: Q4_K, Q5_K, Q_K, Q8_0.
+  - Fused MoE.
+  - Upgrate CI and built package for oneAPI 2025.3.3, support Ubuntu 24.04 built package.
+
 - 2026.03
   - Support Flash-Attention: less memory usage, performance impact depends on LLM.
 
@@ -349,6 +355,12 @@ Choose one of following methods to run.
 ./examples/sycl/test.sh
 ```
 
+- Run llama-server:
+
+```sh
+./examples/sycl/start-svr.sh -m PATH/MODEL_FILE
+```
+
 2. Command line
 Launch inference
 
@@ -637,8 +649,16 @@ Choose one of following methods to run.
 
 1. Script
 
+- Run test:
+
 ```
 examples\sycl\win-test.bat
+```
+
+- Run llama-server:
+
+```
+examples\sycl\win-start-svr.bat -m PATH\MODEL_FILE
 ```
 
 2. Command line
@@ -716,6 +736,14 @@ use 1 SYCL GPUs: [0] with Max compute units:512
 | GGML_SYCL_DISABLE_DNN | 0 (default) or 1 | Disable running computations through oneDNN and always use oneMKL. |
 | ZES_ENABLE_SYSMAN | 0 (default) or 1 | Support to get free memory of GPU by sycl::aspect::ext_intel_free_memory.<br>Recommended to use when --split-mode = layer |
 | UR_L0_ENABLE_RELAXED_ALLOCATION_LIMITS | 0 (default) or 1 | Support malloc device memory more than 4GB.|
+
+## Compile-time Flags
+
+Pass these via `CXXFLAGS` or add a one-off `#define` to enable a flag on the spot.
+
+| Name            | Function                                                                         |
+|-----------------|----------------------------------------------------------------------------------|
+| DEBUG_SYCL_POOL | Enable device memory pool logging on teardown. Useful for profiling allocations. |
 
 ## Design Rule
 
