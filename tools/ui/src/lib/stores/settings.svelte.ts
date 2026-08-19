@@ -40,8 +40,9 @@ import {
 } from '$lib/constants';
 import { ColorMode } from '$lib/enums';
 import { ParameterSyncService } from '$lib/services/parameter-sync.service';
+import { deviceStore } from '$lib/stores/device.svelte';
+// direct imports between stores, not via the barrel, to avoid circular deps
 import { serverStore } from '$lib/stores/server.svelte';
-import { isMobile } from '$lib/stores/viewport.svelte';
 import type { SettingsExportType } from '$lib/types';
 import {
 	configToParameterRecord,
@@ -84,12 +85,6 @@ class SettingsStore {
 		return ParameterSyncService.extractServerDefaults(serverStore.defaultParams);
 	}
 
-	constructor() {
-		if (browser) {
-			this.initialize();
-		}
-	}
-
 	/**
 	 *
 	 *
@@ -99,9 +94,12 @@ class SettingsStore {
 	 */
 
 	/**
-	 * Initialize the settings store by loading from localStorage
+	 * Initialize the settings store by loading from localStorage.
+	 * Called by initStores() after migrations have run.
 	 */
 	initialize() {
+		if (!browser) return;
+
 		try {
 			this.loadConfig();
 			this.migrateLegacyTheme();
@@ -135,35 +133,9 @@ class SettingsStore {
 				...savedVal
 			};
 
-			// Migrate the legacy render keys into `renderContentAsRawText`
-			// (inverted semantics: the old keys opted INTO markdown). Any
-			// explicit raw-text preference wins when the legacy keys disagree.
-			const LEGACY_MARKDOWN_KEYS = ['renderUserContentAsMarkdown', 'renderThinkingAsMarkdown'];
-			const LEGACY_RAW_TEXT_KEY = 'renderUserContentAsRawText'; // this branch's intermediate key
-			const legacyKeys = [...LEGACY_MARKDOWN_KEYS, LEGACY_RAW_TEXT_KEY].filter(
-				(key) => key in savedVal
-			);
-
-			if (legacyKeys.length > 0) {
-				if (!(SETTINGS_KEYS.RENDER_CONTENT_AS_RAW_TEXT in savedVal)) {
-					if (LEGACY_RAW_TEXT_KEY in savedVal) {
-						this.config[SETTINGS_KEYS.RENDER_CONTENT_AS_RAW_TEXT] = savedVal[LEGACY_RAW_TEXT_KEY];
-					} else {
-						this.config[SETTINGS_KEYS.RENDER_CONTENT_AS_RAW_TEXT] = LEGACY_MARKDOWN_KEYS.filter(
-							(key) => key in savedVal
-						).some((key) => savedVal[key] === false);
-					}
-				}
-
-				for (const key of legacyKeys) {
-					delete (this.config as Record<string, unknown>)[key];
-				}
-				this.saveConfig();
-			}
-
 			// Default sendOnEnter to false on mobile when the user has no saved preference
 			if (!(SETTINGS_KEYS.SEND_ON_ENTER in savedVal)) {
-				if (isMobile.current) {
+				if (deviceStore.isMobile) {
 					this.config[SETTINGS_KEYS.SEND_ON_ENTER] = false;
 				}
 			}
@@ -386,17 +358,24 @@ class SettingsStore {
 		// UI settings are the admin's defaults for new users: applied once on
 		// the first visit, never on later loads, so the user's config can
 		// diverge. "Reset to Default" is the explicit way back to the baseline.
+		// A first visit config carries factory values only, so a key that
+		// already diverges here was set by the user before the baseline could
+		// be reached, through the API key splash, and stays theirs.
 		if (uiSettings && this.isFirstVisit) {
 			this.isFirstVisit = false;
 
 			for (const [key, value] of Object.entries(uiSettings)) {
-				if (!this.userOverrides.has(key) && value !== undefined) {
-					setConfigValue(this.config, key, value);
+				if (value === undefined || this.userOverrides.has(key)) continue;
 
-					// theme lives in mode-watcher, not just in config -> propagate
-					if (key === SETTINGS_KEYS.THEME) {
-						setMode(value as ColorMode);
-					}
+				if (getConfigValue(this.config, key) !== getConfigValue(SETTING_CONFIG_DEFAULT, key)) {
+					continue;
+				}
+
+				setConfigValue(this.config, key, value);
+
+				// theme lives in mode-watcher, not just in config -> propagate
+				if (key === SETTINGS_KEYS.THEME) {
+					setMode(value as ColorMode);
 				}
 			}
 		}
@@ -601,7 +580,3 @@ class SettingsStore {
 }
 
 export const settingsStore = new SettingsStore();
-
-export const config = () => settingsStore.config;
-export const theme = () => settingsStore.config[SETTINGS_KEYS.THEME];
-export const isInitialized = () => settingsStore.isInitialized;
